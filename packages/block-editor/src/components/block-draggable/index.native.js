@@ -10,14 +10,20 @@ import Animated, {
 	withDelay,
 	withTiming,
 } from 'react-native-reanimated';
-import TextInputState from 'react-native/Libraries/Components/TextInput/TextInputState';
 
 /**
  * WordPress dependencies
  */
 import { Draggable, DraggableTrigger } from '@wordpress/components';
 import { useSelect, useDispatch } from '@wordpress/data';
-import { useEffect, useRef, useState, Platform } from '@wordpress/element';
+import {
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+	Platform,
+} from '@wordpress/element';
+import RCTAztecView from '@wordpress/react-native-aztec';
 
 /**
  * Internal dependencies
@@ -233,6 +239,9 @@ const BlockDraggableWrapper = ( { children } ) => {
  */
 const BlockDraggable = ( { clientId, children, enabled = true } ) => {
 	const wasBeingDragged = useRef( false );
+	const [ isEditingText, setIsEditingText ] = useState(
+		RCTAztecView.InputState.isFocused()
+	);
 
 	const draggingAnimation = {
 		opacity: useSharedValue( 1 ),
@@ -252,27 +261,25 @@ const BlockDraggable = ( { clientId, children, enabled = true } ) => {
 		);
 	};
 
-	const { isDraggable, isBeingDragged, canDragBlock } = useSelect(
+	const { isDraggable, isBeingDragged, isBlockSelected } = useSelect(
 		( select ) => {
 			const {
 				getBlockRootClientId,
 				getTemplateLock,
 				isBlockBeingDragged,
-				hasSelectedBlock,
+				getSelectedBlockClientId,
 			} = select( blockEditorStore );
 			const rootClientId = getBlockRootClientId( clientId );
 			const templateLock = rootClientId
 				? getTemplateLock( rootClientId )
 				: null;
-			const isAnyTextInputFocused =
-				TextInputState.currentlyFocusedInput() !== null;
+			const selectedBlockClientId = getSelectedBlockClientId();
 
 			return {
 				isBeingDragged: isBlockBeingDragged( clientId ),
 				isDraggable: 'all' !== templateLock,
-				canDragBlock: hasSelectedBlock()
-					? ! isAnyTextInputFocused
-					: true,
+				isBlockSelected:
+					selectedBlockClientId && selectedBlockClientId === clientId,
 			};
 		},
 		[ clientId ]
@@ -289,6 +296,31 @@ const BlockDraggable = ( { clientId, children, enabled = true } ) => {
 		wasBeingDragged.current = isBeingDragged;
 	}, [ isBeingDragged ] );
 
+	const onFocusAztec = useCallback( () => {
+		setIsEditingText( true );
+	}, [] );
+
+	const onBlurAztec = useCallback( () => {
+		setIsEditingText( false );
+	}, [] );
+
+	const registerAztecListeners = () => {
+		RCTAztecView.InputState.addFocusListener( onFocusAztec );
+		RCTAztecView.InputState.addBlurListener( onBlurAztec );
+	};
+
+	const unregisterAztecListeners = () => {
+		RCTAztecView.InputState.removeFocusListener( onFocusAztec );
+		RCTAztecView.InputState.removeBlurListener( onBlurAztec );
+	};
+
+	useEffect( () => {
+		registerAztecListeners();
+		return () => {
+			unregisterAztecListeners();
+		};
+	}, [] );
+
 	const animatedWrapperStyles = useAnimatedStyle( () => {
 		return {
 			opacity: draggingAnimation.opacity.value,
@@ -298,6 +330,8 @@ const BlockDraggable = ( { clientId, children, enabled = true } ) => {
 		animatedWrapperStyles,
 		styles[ 'draggable-wrapper__container' ],
 	];
+
+	const canDragBlock = enabled && ( ! isBlockSelected || ! isEditingText );
 
 	if ( ! isDraggable ) {
 		return children( { isDraggable: false } );
